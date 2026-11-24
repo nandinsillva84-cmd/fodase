@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Fábrica de APK</title>
+<style>
+:root{--bg:#10151b;--card:#18202a;--tx:#e9eef5;--mut:#8f9bad;--ac:#3ddc84;--bd:#283240}
+*{box-sizing:border-box}
+body{margin:0 auto;background:var(--bg);color:var(--tx);font:15px/1.5 system-ui,sans-serif;padding:16px;max-width:640px}
+h1{font-size:20px;margin:0 0 4px}
+a{color:var(--ac)}
+.s{color:var(--mut);margin:0 0 16px;font-size:13px}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:12px}
+.c h2{font-size:14px;margin:0 0 10px;color:var(--ac)}
+button,select,input[type=text],input[type=password]{font:inherit;color:var(--tx);background:#222d3a;border:1px solid var(--bd);border-radius:8px;padding:10px 6px;width:100%}
+input[type=text],input[type=password]{padding:10px 12px}
+button{cursor:pointer;font-weight:600}
+button.p{background:var(--ac);color:#05260f;border:0}
+button:disabled{opacity:.4}
+.r{display:flex;gap:8px;margin-bottom:8px}
+label{display:block;font-size:12px;color:var(--mut);margin:8px 0 4px}
+.m{font-size:13px;color:var(--mut)}
+ol{padding-left:18px;margin:8px 0 0;font-size:13px;color:var(--mut)}
+#st{margin-top:10px;font-size:14px}
+</style>
+</head>
+<body>
+<h1>📱 Fábrica de APK</h1>
+<p class="s">Envie ZIP, pasta ou HTML. O GitHub compila o APK e o link de download aparece aqui.</p>
+
+<div class="c"><h2>1. Conexão com o GitHub</h2>
+<label>Repositório (usuario/repo)</label>
+<input type="text" id="rp" autocapitalize="none" autocorrect="off">
+<label>Token do GitHub (fica só neste navegador)</label>
+<input type="password" id="tk" autocomplete="off">
+<details><summary class="m">Como criar o token</summary>
+<ol>
+<li>Abra <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">github.com/settings/personal-access-tokens/new</a>.</li>
+<li>Em Repository access, escolha só este repositório.</li>
+<li>Em Permissions, deixe <b>Contents</b> e <b>Actions</b> em Read and write.</li>
+<li>Gere o token, copie e cole acima.</li>
+</ol></details></div>
+
+<div class="c"><h2>2. Escolha seu app ou jogo</h2>
+<div class="r"><button id="bz">📦 ZIP</button><button id="bf">📁 Pasta</button><button id="bh">📄 HTML</button></div>
+<input type="file" id="iz" accept=".zip" hidden>
+<input type="file" id="if" webkitdirectory multiple hidden>
+<input type="file" id="ih" multiple hidden>
+<div class="m" id="info">Nenhum arquivo ainda. No PC também dá para arrastar uma pasta para cá. Escolher pasta só funciona no PC; no celular use ZIP.</div>
+<label>Arquivo principal (abre ao iniciar)</label>
+<select id="entry" disabled></select></div>
+
+<div class="c"><h2>3. Configurações</h2>
+<label>Nome do app</label><input type="text" id="nm" value="Meu Jogo">
+<label>ID do pacote</label><input type="text" id="pk" value="com.torraostudios.meujogo" autocapitalize="none" autocorrect="off">
+<label>Orientação</label>
+<select id="or"><option value="sensorLandscape">Horizontal</option><option value="">Automática</option><option value="portrait">Vertical</option></select>
+<label>Ícone (opcional)</label><input type="file" id="ic" accept="image/*" style="width:100%"></div>
+
+<div class="c"><h2>4. Gerar</h2>
+<button class="p" id="go" disabled>🚀 Gerar APK</button>
+<div id="st" class="m">A compilação leva uns 5 minutos. Pode deixar esta página aberta.</div></div>
+
+<div class="c"><h2>APKs gerados</h2><div id="ls" class="m">Conecte o repositório para ver a lista.</div></div>
+
+<script>
+const $=id=>document.getElementById(id);
+let files=new Map();
+const norm=p=>p.replace(/\\/g,'/').replace(/^\/+/,'');
+const esc=s=>String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+const L=k=>{try{return localStorage.getItem(k)||''}catch(e){return ''}};
+const S=(k,v)=>{try{localStorage.setItem(k,v)}catch(e){}};
+const repo=()=>$('rp').value.trim(),tok=()=>$('tk').value.trim();
+
+/* ---------- ZIP (leitura e escrita, sem bibliotecas) ---------- */
+const CT=new Uint32Array(256).map((_,n)=>{let c=n;for(let k=0;k<8;k++)c=c&1?0xEDB88320^(c>>>1):c>>>1;return c>>>0});
+const crc32=u=>{let c=-1;for(let i=0;i<u.length;i++)c=CT[(c^u[i])&255]^(c>>>8);return(c^-1)>>>0};
+
+class Z{
+  constructor(){this.e=[]}
+  file(n,d){this.e.push([n,d])}
+  async gen(){
+    const enc=new TextEncoder(),parts=[],cds=[];let off=0;
+    for(const [name,data] of this.e){
+      const nb=enc.encode(name),blob=data instanceof Blob?data:new Blob([data]);
+      const c=crc32(new Uint8Array(await blob.arrayBuffer()));
+      let body=blob,m=0;
+      if(blob.size>0&&typeof CompressionStream!=='undefined'){
+        const cb=await new Response(blob.stream().pipeThrough(new CompressionStream('deflate-raw'))).blob();
+        if(cb.size<blob.size){body=cb;m=8}
+      }
+      const h=new DataView(new ArrayBuffer(30)),g=new DataView(new ArrayBuffer(46));
+      h.setUint32(0,0x04034b50,true);h.setUint16(4,20,true);h.setUint16(6,0x800,true);h.setUint16(8,m,true);h.setUint16(12,0x21,true);
+      h.setUint32(14,c,true);h.setUint32(18,body.size,true);h.setUint32(22,blob.size,true);h.setUint16(26,nb.length,true);
+      g.setUint32(0,0x02014b50,true);g.setUint16(4,20,true);g.setUint16(6,20,true);g.setUint16(8,0x800,true);g.setUint16(10,m,true);g.setUint16(14,0x21,true);
+      g.setUint32(16,c,true);g.setUint32(20,body.size,true);g.setUint32(24,blob.size,true);g.setUint16(28,nb.length,true);g.setUint32(42,off,true);
+      parts.push(h,nb,body);cds.push(g,nb);off+=30+nb.length+body.size;
+    }
+    const t=new DataView(new ArrayBuffer(22));
+    t.setUint32(0,0x06054b50,true);t.setUint16(8,this.e.length,true);t.setUint16(10,this.e.length,true);
+    t.setUint32(12,cds.reduce((a,b)=>a+b.byteLength,0),true);t.setUint32(16,off,true);
+    return new Blob([...parts,...cds,t],{type:'application/zip'});
+  }
+}
+
+async function inflate(b){
+  if(typeof DecompressionStream==='undefined')throw new Error('Este navegador não abre ZIP compactado. Atualize o Chrome.');
+  return new Response(b.stream().pipeThrough(new DecompressionStream('deflate-raw'))).blob();
+}
+
+async function readZip(f,out){
+  const sz=f.size,tail=new DataView(await f.slice(Math.max(0,sz-65557),sz).arrayBuffer());
+  let i=tail.byteLength-22;
+  while(i>=0&&tail.getUint32(i,true)!==0x06054b50)i--;
+  if(i<0)throw new Error('ZIP inválido: '+f.name);
+  const n=tail.getUint16(i+10,true),cdS=tail.getUint32(i+12,true),cdO=tail.getUint32(i+16,true);
+  const cd=new DataView(await f.slice(cdO,cdO+cdS).arrayBuffer()),u8=new Uint8Array(cd.buffer),dec=new TextDecoder();
+  let p=0;
+  for(let k=0;k<n&&cd.getUint32(p,true)===0x02014b50;k++){
+    const m=cd.getUint16(p+10,true),cs=cd.getUint32(p+20,true),nl=cd.getUint16(p+28,true),el=cd.getUint16(p+30,true),cl=cd.getUint16(p+32,true),o=cd.getUint32(p+42,true);
+    const name=dec.decode(u8.subarray(p+46,p+46+nl));
+    p+=46+nl+el+cl;
+    if(name.endsWith('/')||/(^|\/)(__MACOSX\/|\.DS_Store$)/.test(name))continue;
+    const h=new DataView(await f.slice(o,o+30).arrayBuffer()),s=o+30+h.getUint16(26,true)+h.getUint16(28,true),raw=f.slice(s,s+cs);
+    let d;
+    if(m===0)d=raw;else if(m===8)d=await inflate(raw);else throw new Error('Compressão ZIP não suportada em '+name);
+    out.push([name,d]);
+  }
+}
+
+async function walk(en,path,out){
+  if(en.isFile){const f=await new Promise((r,j)=>en.file(r,j));out.push([path+en.name,f])}
+  else{const rd=en.createReader();let b;do{b=await new Promise((r,j)=>rd.readEntries(r,j));for(const c of b)await walk(c,path+en.name+'/',out)}while(b.length)}
+}
+
+async function load(list){
+  files=new Map();
+  $('info').textContent='Lendo…';
+  try{
+    const out=[];
+    for(const [p,f] of list){
+      if(/\.zip$/i.test(p)&&!p.includes('/'))await readZip(f,out);else out.push([p,f]);
+    }
+    for(const [p,f] of out)files.set(norm(p),f);
+  }catch(err){$('info').textContent='Erro ao ler: '+err.message;return}
+  let ps=[...files.keys()];
+  while(ps.length&&ps.every(p=>p.includes('/')&&p.split('/')[0]===ps[0].split('/')[0])){
+    const n=new Map();
+    for(const [p,v] of files)n.set(p.slice(p.indexOf('/')+1),v);
+    files=n;ps=[...files.keys()];
+  }
+  const hs=ps.filter(p=>/\.html?$/i.test(p)).sort((a,b)=>a.split('/').length-b.split('/').length||a.localeCompare(b));
+  const sel=$('entry');sel.innerHTML='';
+  hs.forEach(p=>sel.add(new Option(p,p)));
+  const ix=hs.find(p=>/(^|\/)index\.html$/i.test(p));
+  if(ix)sel.value=ix;
+  const mb=([...files.values()].reduce((a,b)=>a+b.size,0)/1048576).toFixed(1);
+  $('info').textContent=hs.length?`✅ ${files.size} arquivos · ${mb} MB · ${hs.length} HTML(s)`:'⚠️ Nenhum arquivo .html encontrado.';
+  sel.disabled=!hs.length;$('go').disabled=!hs.length;
+}
+
+async function icon(){
+  const f=$('ic').files[0];if(!f)return null;
+  const im=await createImageBitmap(f),c=document.createElement('canvas');
+  c.width=c.height=192;c.getContext('2d').drawImage(im,0,0,192,192);
+  return new Promise(r=>c.toBlob(r,'image/png'));
+}
+
+/* ---------- GitHub ---------- */
+async function gh(m,path,body){
+  const h={Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'};
+  if(tok())h.Authorization='Bearer '+tok();
+  if(body)h['Content-Type']='application/json';
+  const r=await fetch('https://api.github.com/repos/'+repo()+path,{method:m,headers:h,body:body?JSON.stringify(body):undefined});
+  if(!r.ok){let t='';try{t=(await r.json()).message}catch(e){}throw new Error(r.status+' '+t)}
+  return r.status===204?null:r.json();
+}
+const b64=blob=>new Promise((res,rej)=>{const f=new FileReader();f.onload=()=>res(f.result.split(',')[1]);f.onerror=()=>rej(f.error);f.readAsDataURL(blob)});
+
+async function lista(){
+  if(!repo()){return}
+  try{
+    const rs=await gh('GET','/releases?per_page=10');
+    const l=rs.filter(r=>/^apk-/.test(r.tag_name)&&r.assets[0]);
+    $('ls').innerHTML=l.length?l.map(r=>`<div>• <a href="${esc(r.assets[0].browser_download_url)}">${esc(r.name||r.assets[0].name)}</a> · ${new Date(r.created_at).toLocaleDateString('pt-BR')}</div>`).join(''):'Nenhum APK ainda.';
+  }catch(e){$('ls').textContent='Não consegui listar os APKs ('+e.message+').'}
+}
+
+async function build(){
+  const nm=$('nm').value.trim()||'App',pk=$('pk').value.trim().toLowerCase();
+  if(!/^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/.test(pk))throw new Error('ID do pacote inválido. Exemplo: com.meunome.jogo');
+  const ic=await icon(),z=new Z();
+  z.file('config.json',JSON.stringify({name:nm,package:pk,orientation:$('or').value,start:encodeURI($('entry').value)}));
+  if(ic)z.file('icon.png',ic);
+  for(const [p,v] of files)z.file('www/'+p,v);
+  return z;
+}
+
+async function gerar(){
+  const st=t=>{$('st').innerHTML=t};
+  $('go').disabled=true;
+  try{
+    if(!repo()||!tok())throw new Error('Preencha o repositório e o token do GitHub (passo 1).');
+    const z=await build(),id=Date.now().toString(36);
+    st('📦 Empacotando…');
+    const blob=await z.gen();
+    if(blob.size>50*1048576)throw new Error('Pacote com '+Math.round(blob.size/1048576)+' MB. Acima de 50 MB o GitHub recusa o envio pelo navegador.');
+    st('⬆️ Enviando para o GitHub…');
+    const info=await gh('GET','');
+    await gh('PUT',`/contents/builds/${id}.zip`,{message:'build '+id,content:await b64(blob)});
+    await sleep(2000);
+    st('🚀 Iniciando a compilação…');
+    await gh('POST','/actions/workflows/build-apk.yml/dispatches',{ref:info.default_branch,inputs:{id}});
+    let run=null;const t0=Date.now();
+    while(Date.now()-t0<25*60000){
+      await sleep(7000);
+      const r=await gh('GET','/actions/runs?event=workflow_dispatch&per_page=10');
+      run=r.workflow_runs.find(x=>x.display_title==='APK '+id)||null;
+      if(!run){st('⏳ Aguardando o GitHub iniciar…');continue}
+      st(`🔨 Compilando (${run.status}) · <a href="${esc(run.html_url)}" target="_blank" rel="noopener">ver log</a>`);
+      if(run.status==='completed')break;
+    }
+    if(!run||run.conclusion!=='success')throw new Error('A compilação falhou ou demorou demais.'+(run?' Veja o log: '+run.html_url:' Veja a aba Actions do repositório.'));
+    let rel=null;
+    for(let i=0;i<6&&!rel;i++){try{rel=await gh('GET','/releases/tags/apk-'+id)}catch(e){await sleep(3000)}}
+    const a=rel&&rel.assets[0];
+    if(!a)throw new Error('O APK foi gerado, mas não achei o arquivo. Veja a aba Releases do repositório.');
+    st(`✅ APK pronto! <a href="${esc(a.browser_download_url)}">⬇️ Baixar ${esc(a.name)}</a>`);
+    lista();
+  }catch(err){st('❌ '+esc(err.message))}
+  $('go').disabled=!files.size;
+}
+
+/* ---------- Interface ---------- */
+function guess(){
+  const h=location.hostname;
+  if(h.endsWith('.github.io')){const o=h.split('.')[0],r=location.pathname.split('/')[1];return o+'/'+(r||h)}
+  return '';
+}
+$('rp').value=L('rp')||guess();$('tk').value=L('tk');
+['rp','tk'].forEach(i=>$(i).onchange=()=>{S('rp',repo());S('tk',tok());lista()});
+$('bz').onclick=()=>$('iz').click();
+$('bf').onclick=()=>$('if').click();
+$('bh').onclick=()=>$('ih').click();
+['iz','if','ih'].forEach(i=>$(i).onchange=e=>{const l=[...e.target.files].map(f=>[f.webkitRelativePath||f.name,f]);e.target.value='';if(l.length)load(l)});
+document.ondragover=e=>e.preventDefault();
+document.ondrop=async e=>{
+  e.preventDefault();const out=[];
+  try{for(const i of [...e.dataTransfer.items]){const en=i.webkitGetAsEntry&&i.webkitGetAsEntry();if(en)await walk(en,'',out)}}
+  catch(err){$('info').textContent='Erro ao ler pasta: '+err.message;return}
+  if(out.length)load(out);
+};
+window.onerror=m=>{$('info').textContent='Erro: '+m};
+$('go').onclick=gerar;
+lista();
+</script>
+</body>
+</html>
